@@ -242,13 +242,15 @@
       maxBoundsViscosity: 1
     }).setView([40, -30], 3);
 
-    L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
-      attribution: "&copy; OpenStreetMap &copy; CARTO · Temperature: NASA GISTEMP v4",
-      subdomains: "abcd",
-      maxZoom: 19,
-      noWrap: true,
-      bounds: WORLD_BOUNDS
-    }).addTo(map);
+    L.tileLayer(
+      "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}",
+      {
+        attribution: "Tiles &copy; Esri · Temperature: NASA GISTEMP v4",
+        maxZoom: 16,
+        noWrap: true,
+        bounds: WORLD_BOUNDS
+      }
+    ).addTo(map);
 
     function lockMinZoom() {
       const size = map.getSize();
