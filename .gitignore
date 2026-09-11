@@ -1,0 +1,19 @@
+# Python
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+.Python
+
+# NASA GISTEMP downloads / extract (regenerate with app.py)
+*.nc
+*.nc.gz
+
+# Unused / intermediate exports
+temperature_anomalies.geojson
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp

@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Global temperature departures — GISTEMP vs 1901–2000</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+  <style>
+    :root {
+      --bg: #e8e4dc;
+      --panel: rgba(12, 16, 22, 0.92);
+      --border: rgba(255, 255, 255, 0.12);
+      --text: #e8edf4;
+      --muted: #9aa6b5;
+      --accent: #f4a582;
+    }
+    * { box-sizing: border-box; }
+    html, body, #map {
+      margin: 0;
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    }
+    #map { width: 100%; }
+
+    .panel {
+      position: absolute;
+      z-index: 500;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 14px;
+      backdrop-filter: blur(8px);
+      max-width: min(380px, calc(100vw - 24px));
+    }
+    .title-panel {
+      top: 12px;
+      left: 12px;
+    }
+    .title-panel h1 {
+      margin: 0 0 4px;
+      font-size: 16px;
+      font-weight: 650;
+      letter-spacing: 0.01em;
+    }
+    .title-panel .meta {
+      margin: 0;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+    .title-panel .global {
+      margin: 8px 0 0;
+      font-size: 20px;
+      font-weight: 650;
+    }
+    .title-panel .global.warm { color: #f4a582; }
+    .title-panel .global.cool { color: #67a9cf; }
+    .status {
+      margin: 8px 0 0;
+      font-size: 12px;
+      color: var(--accent);
+    }
+
+    details.method {
+      margin-top: 10px;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+    details.method summary {
+      cursor: pointer;
+      color: var(--text);
+      font-size: 12px;
+    }
+    details.method p { margin: 8px 0 0; }
+
+    .legend {
+      bottom: 88px;
+      right: 12px;
+      width: 220px;
+    }
+    .legend h2 {
+      margin: 0 0 8px;
+      font-size: 12px;
+      font-weight: 650;
+    }
+    .legend-bar {
+      height: 12px;
+      border-radius: 6px;
+      background: linear-gradient(
+        90deg,
+        #2166ac 0%,
+        #67a9cf 25%,
+        #ffffbf 50%,
+        #f4a582 75%,
+        #b2182b 100%
+      );
+    }
+    .legend-labels {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 6px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .legend p {
+      margin: 8px 0 0;
+      font-size: 11px;
+      color: var(--muted);
+      line-height: 1.4;
+    }
+
+    .timeline {
+      left: 12px;
+      right: 12px;
+      bottom: 12px;
+      max-width: none;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .timeline button {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 7px 12px;
+      font-size: 13px;
+      cursor: pointer;
+      min-width: 72px;
+    }
+    .timeline button:hover { background: rgba(255, 255, 255, 0.14); }
+    .timeline input[type="range"] {
+      flex: 1;
+      min-width: 0;
+      accent-color: #f4a582;
+    }
+    .timeline .month-label {
+      font-size: 13px;
+      min-width: 9.5em;
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    .leaflet-tooltip.anomaly-tip {
+      background: #10151c;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 10px;
+      box-shadow: none;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .leaflet-tooltip.anomaly-tip::before { display: none; }
+    .leaflet-control-attribution {
+      background: rgba(12, 16, 22, 0.8) !important;
+      color: #8b95a3 !important;
+    }
+    .leaflet-control-attribution a { color: #c5cdd8 !important; }
+    .anomaly-overlay {
+      pointer-events: none;
+      opacity: 0.55;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <div class="panel title-panel">
+    <h1>Global temperature departures</h1>
+    <p class="meta" id="subtitle">NASA GISTEMP v4 · 2° grid · vs 1901–2000</p>
+    <p class="global" id="globalValue"></p>
+    <p class="status" id="status">Loading latest month…</p>
+    <details class="method">
+      <summary>Why departures, not absolute temperature?</summary>
+      <p>
+        Absolute temperature is not comparable across the globe. A departure is this
+        month minus the long-term average for that place and calendar month, so
+        +2°C over Siberia and +2°C over the tropical Pacific both mean unusually
+        warm for that location.
+      </p>
+      <p>
+        GISTEMP blends GHCN-M land air temperature with ERSST sea-surface
+        temperature (same family of inputs as NOAA Climate at a Glance). Native
+        anomalies are vs 1951–1980; this map subtracts each cell’s 1901–2000
+        monthly mean so the zero is the 20th-century average. The global number
+        is an area-weighted mean (<code>cos(latitude)</code>), because 2° boxes
+        shrink toward the poles.
+      </p>
+      <p>
+        This is not NOAAGlobalTemp’s 5°×5° product. The field is interpolated from
+        2° cell centers so it is continuous rather than blocky.
+      </p>
+    </details>
+  </div>
+
+  <div class="panel legend">
+    <h2>Departure vs 1901–2000</h2>
+    <div class="legend-bar"></div>
+    <div class="legend-labels">
+      <span>−4°C</span>
+      <span>0°</span>
+      <span>+4°C</span>
+    </div>
+    <p>Yellow is near the 20th-century average for that location and month.</p>
+  </div>
+
+  <div class="panel timeline">
+    <button type="button" id="playBtn">Play</button>
+    <input type="range" id="monthSlider" min="0" max="0" value="0" step="1">
+    <span class="month-label" id="monthLabel">—</span>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script>
+    const COLOR_RANGE = 4;
+    const PIXEL_STEP = 2;
+    const PLAY_MS = 167;
+    const MONTH_NAMES = [
+      "January", "February", "March", "April", "May", "June",
+      "July", "August", "September", "October", "November", "December"
+    ];
+    const COLOR_STOPS = [
+      [-4, [33, 102, 172]],
+      [-2, [103, 169, 207]],
+      [0, [255, 255, 191]],
+      [2, [244, 165, 130]],
+      [4, [178, 24, 43]]
+    ];
+
+    const WORLD_BOUNDS = L.latLngBounds([-85.051128, -180], [85.051128, 180]);
+
+    const map = L.map("map", {
+      worldCopyJump: false,
+      minZoom: 3,
+      maxZoom: 8,
+      maxBounds: WORLD_BOUNDS,
+      maxBoundsViscosity: 1
+    }).setView([40, -30], 3);
+
+    L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
+      attribution: "&copy; OpenStreetMap &copy; CARTO · Temperature: NASA GISTEMP v4",
+      subdomains: "abcd",
+      maxZoom: 19,
+      noWrap: true,
+      bounds: WORLD_BOUNDS
+    }).addTo(map);
+
+    function lockMinZoom() {
+      const size = map.getSize();
+      const needed = Math.max(
+        Math.log2(Math.max(size.x, 1) / 256),
+        Math.log2(Math.max(size.y, 1) / 256)
+      );
+      const minZ = Math.max(3, Math.floor(needed));
+      map.setMinZoom(minZ);
+      if (map.getZoom() < minZ) map.setZoom(minZ);
+    }
+    map.whenReady(lockMinZoom);
+    map.on("resize", lockMinZoom);
+
+    const statusEl = document.getElementById("status");
+    const subtitleEl = document.getElementById("subtitle");
+    const globalEl = document.getElementById("globalValue");
+    const playBtn = document.getElementById("playBtn");
+    const monthSlider = document.getElementById("monthSlider");
+    const monthLabel = document.getElementById("monthLabel");
+
+    const tooltip = L.tooltip({
+      sticky: true,
+      className: "anomaly-tip",
+      opacity: 0.96,
+      direction: "top"
+    });
+
+    let meta = null;
+    let times = [];
+    let globals = [];
+    let lat0 = -89;
+    let lon0 = -179;
+    let gridStep = 2;
+    let nlat = 90;
+    let nlon = 180;
+    let scale = 0.1;
+    let fill = -32768;
+    let plane = nlat * nlon;
+    let currentT = 0;
+    let currentGrid = null;
+    let monthGen = 0;
+    let playing = false;
+    let playTimer = 0;
+    const shardCache = new Map();
+    const shardInflight = new Map();
+    const yearStart = new Map();
+
+    const ViewportOverlay = L.Layer.extend({
+      onAdd: function (mapRef) {
+        this._canvas = L.DomUtil.create("canvas", "anomaly-overlay");
+        mapRef.getPanes().overlayPane.appendChild(this._canvas);
+        mapRef.on("move zoom resize", this._redraw, this);
+        this._redraw();
+      },
+      onRemove: function (mapRef) {
+        mapRef.off("move zoom resize", this._redraw, this);
+        L.DomUtil.remove(this._canvas);
+      },
+      redraw: function () {
+        this._redraw();
+      },
+      _redraw: function () {
+        const mapRef = this._map;
+        const canvas = this._canvas;
+        if (!mapRef || !canvas || !currentGrid) return;
+        const size = mapRef.getSize();
+        const w = Math.max(1, Math.ceil(size.x / PIXEL_STEP));
+        const h = Math.max(1, Math.ceil(size.y / PIXEL_STEP));
+        canvas.width = w;
+        canvas.height = h;
+        canvas.style.width = size.x + "px";
+        canvas.style.height = size.y + "px";
+        L.DomUtil.setPosition(canvas, mapRef.containerPointToLayerPoint([0, 0]));
+
+        const ctx = canvas.getContext("2d");
+        const image = ctx.createImageData(w, h);
+        const data = image.data;
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) {
+            const latlng = mapRef.containerPointToLatLng(
+              L.point(x * PIXEL_STEP + PIXEL_STEP / 2, y * PIXEL_STEP + PIXEL_STEP / 2)
+            );
+            const idx = (y * w + x) * 4;
+            if (latlng.lat > 85.051128 || latlng.lat < -85.051128) {
+              data[idx + 3] = 0;
+              continue;
+            }
+            const value = sampleAnomaly(latlng.lat, latlng.lng);
+            if (value == null) {
+              data[idx + 3] = 0;
+              continue;
+            }
+            const rgb = colorForAnomaly(value);
+            data[idx] = rgb[0];
+            data[idx + 1] = rgb[1];
+            data[idx + 2] = rgb[2];
+            data[idx + 3] = 160;
+          }
+        }
+        ctx.putImageData(image, 0, 0);
+      }
+    });
+
+    const overlay = new ViewportOverlay();
+
+    function formatSigned(value) {
+      const n = Number(value);
+      const abs = Math.abs(n).toFixed(1);
+      return (n > 0 ? "+" : n < 0 ? "−" : "") + abs + "°C";
+    }
+
+    function formatMonth(stamp) {
+      const parts = String(stamp).split("-");
+      const month = MONTH_NAMES[Number(parts[1]) - 1] || parts[1];
+      return month + " " + parts[0];
+    }
+
+    function wrapLonIdx(j) {
+      return ((j % nlon) + nlon) % nlon;
+    }
+
+    function latToIndex(lat) {
+      return (lat - lat0) / gridStep;
+    }
+
+    function lonToIndex(lon) {
+      const x = ((lon + 180) % 360 + 360) % 360 - 180;
+      return (x - lon0) / gridStep;
+    }
+
+    function decodeCell(i, j) {
+      if (!currentGrid || i < 0 || i >= nlat) return null;
+      const v = currentGrid[i * nlon + wrapLonIdx(j)];
+      if (v === fill) return null;
+      return v * scale;
+    }
+
+    function lerpColor(a, b, t) {
+      return [
+        Math.round(a[0] + (b[0] - a[0]) * t),
+        Math.round(a[1] + (b[1] - a[1]) * t),
+        Math.round(a[2] + (b[2] - a[2]) * t)
+      ];
+    }
+
+    function colorForAnomaly(value) {
+      if (value <= COLOR_STOPS[0][0]) return COLOR_STOPS[0][1];
+      if (value >= COLOR_STOPS[COLOR_STOPS.length - 1][0]) {
+        return COLOR_STOPS[COLOR_STOPS.length - 1][1];
+      }
+      for (let i = 0; i < COLOR_STOPS.length - 1; i++) {
+        const x0 = COLOR_STOPS[i][0];
+        const c0 = COLOR_STOPS[i][1];
+        const x1 = COLOR_STOPS[i + 1][0];
+        const c1 = COLOR_STOPS[i + 1][1];
+        if (value <= x1) return lerpColor(c0, c1, (value - x0) / (x1 - x0));
+      }
+      return COLOR_STOPS[COLOR_STOPS.length - 1][1];
+    }
+
+    function sampleAnomaly(lat, lon) {
+      const fi = Math.max(0, Math.min(nlat - 1, latToIndex(lat)));
+      let fj = lonToIndex(lon);
+      fj = ((fj % nlon) + nlon) % nlon;
+      const i0 = Math.floor(fi);
+      const i1 = Math.min(i0 + 1, nlat - 1);
+      const j0 = Math.floor(fj);
+      const j1 = wrapLonIdx(j0 + 1);
+      const ty = fi - i0;
+      const tx = fj - j0;
+      const corners = [
+        [decodeCell(i0, j0), (1 - tx) * (1 - ty)],
+        [decodeCell(i0, j1), tx * (1 - ty)],
+        [decodeCell(i1, j0), (1 - tx) * ty],
+        [decodeCell(i1, j1), tx * ty]
+      ];
+      let num = 0;
+      let den = 0;
+      for (let k = 0; k < corners.length; k++) {
+        const value = corners[k][0];
+        const w = corners[k][1];
+        if (value == null || w <= 0) continue;
+        num += value * w;
+        den += w;
+      }
+      return den === 0 ? null : num / den;
+    }
+
+    function yearOfIndex(index) {
+      return times[index].slice(0, 4);
+    }
+
+    function ensureYear(year) {
+      if (shardCache.has(year)) return Promise.resolve(shardCache.get(year));
+      if (shardInflight.has(year)) return shardInflight.get(year);
+      const url = meta.shards[year];
+      if (!url) return Promise.reject(new Error("No shard for " + year));
+      const pending = fetch(url)
+        .then(function (response) {
+          if (!response.ok) throw new Error("HTTP " + response.status + " for " + url);
+          return response.arrayBuffer();
+        })
+        .then(function (buffer) {
+          const arr = new Int16Array(buffer);
+          shardCache.set(year, arr);
+          shardInflight.delete(year);
+          return arr;
+        })
+        .catch(function (err) {
+          shardInflight.delete(year);
+          throw err;
+        });
+      shardInflight.set(year, pending);
+      return pending;
+    }
+
+    function prefetchNextYear(index) {
+      const next = String(Number(yearOfIndex(index)) + 1);
+      if (meta.shards[next]) ensureYear(next);
+    }
+
+    function updateLabels() {
+      const stamp = times[currentT];
+      const global = globals[currentT];
+      monthLabel.textContent = formatMonth(stamp);
+      monthSlider.value = String(currentT);
+      subtitleEl.textContent =
+        "NASA GISTEMP v4 · 2° grid · " + formatMonth(stamp) + " vs 1901–2000";
+      if (typeof global === "number") {
+        globalEl.textContent = "Global: " + formatSigned(global);
+        globalEl.className = "global " + (global >= 0 ? "warm" : "cool");
+      }
+    }
+
+    function setGridFromShard(year, index) {
+      const shard = shardCache.get(year);
+      const start = yearStart.get(year);
+      const offset = index - start;
+      currentGrid = shard.subarray(offset * plane, (offset + 1) * plane);
+      overlay.redraw();
+    }
+
+    async function setMonth(index) {
+      index = Math.max(0, Math.min(times.length - 1, index));
+      const gen = ++monthGen;
+      currentT = index;
+      updateLabels();
+      const year = yearOfIndex(index);
+      if (shardCache.has(year)) {
+        setGridFromShard(year, index);
+        statusEl.textContent = "";
+        return;
+      }
+      if (index === times.length - 1 && currentGrid && currentGrid.length === plane) {
+        overlay.redraw();
+      }
+      statusEl.textContent = "Loading " + year + "…";
+      try {
+        await ensureYear(year);
+        if (gen !== monthGen) return;
+        setGridFromShard(year, index);
+        statusEl.textContent = "";
+      } catch (err) {
+        if (gen !== monthGen) return;
+        statusEl.textContent = "Could not load " + year + ". " + err.message;
+      }
+    }
+
+    function stopPlay() {
+      playing = false;
+      if (playTimer) {
+        clearTimeout(playTimer);
+        playTimer = 0;
+      }
+      playBtn.textContent = "Play";
+    }
+
+    async function playStep() {
+      if (!playing) return;
+      if (currentT >= times.length - 1) {
+        stopPlay();
+        return;
+      }
+      prefetchNextYear(currentT);
+      await setMonth(currentT + 1);
+      if (!playing) return;
+      playTimer = setTimeout(playStep, PLAY_MS);
+    }
+
+    function startPlay() {
+      playing = true;
+      playBtn.textContent = "Pause";
+      if (currentT >= times.length - 1) {
+        prefetchNextYear(0);
+        setMonth(0).then(function () {
+          if (playing) playTimer = setTimeout(playStep, PLAY_MS);
+        });
+        return;
+      }
+      playStep();
+    }
+
+    playBtn.addEventListener("click", function () {
+      if (playing) stopPlay();
+      else startPlay();
+    });
+
+    monthSlider.addEventListener("input", function () {
+      stopPlay();
+      setMonth(Number(monthSlider.value));
+    });
+
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        stopPlay();
+        setMonth(currentT - 1);
+      } else if (event.key === "ArrowRight") {
+        event.preventDefault();
+        stopPlay();
+        setMonth(currentT + 1);
+      } else if (event.key === " ") {
+        if (event.target && event.target.tagName === "INPUT") return;
+        event.preventDefault();
+        if (playing) stopPlay();
+        else startPlay();
+      }
+    });
+
+    map.on("mousemove", function (event) {
+      const value = sampleAnomaly(event.latlng.lat, event.latlng.lng);
+      if (value == null) {
+        map.closeTooltip(tooltip);
+        return;
+      }
+      tooltip
+        .setLatLng(event.latlng)
+        .setContent(
+          "<strong>" + event.latlng.lat.toFixed(1) + "°, " +
+          event.latlng.lng.toFixed(1) + "°</strong><br>" +
+          "Departure vs 1901–2000: <strong>" + formatSigned(value) + "</strong>"
+        );
+      tooltip.addTo(map);
+    });
+    map.on("mouseout", function () {
+      map.closeTooltip(tooltip);
+    });
+
+    map.whenReady(function () {
+      Promise.all([
+        fetch("anomalies.json").then(function (response) {
+          if (!response.ok) throw new Error("HTTP " + response.status + " for anomalies.json");
+          return response.json();
+        }),
+        fetch("anomalies-latest.bin").then(function (response) {
+          if (!response.ok) throw new Error("HTTP " + response.status + " for anomalies-latest.bin");
+          return response.arrayBuffer();
+        })
+      ])
+        .then(function (results) {
+          meta = results[0];
+          times = meta.times || [];
+          globals = meta.global_anomaly || [];
+          const grid = meta.grid || {};
+          lat0 = grid.lat0;
+          lon0 = grid.lon0;
+          gridStep = grid.step;
+          nlat = grid.nlat;
+          nlon = grid.nlon;
+          scale = meta.scale;
+          fill = meta.fill;
+          plane = nlat * nlon;
+          times.forEach(function (stamp, index) {
+            const year = stamp.slice(0, 4);
+            if (!yearStart.has(year)) yearStart.set(year, index);
+          });
+
+          currentT = times.length - 1;
+          currentGrid = new Int16Array(results[1]);
+          monthSlider.min = "0";
+          monthSlider.max = String(times.length - 1);
+          updateLabels();
+          overlay.addTo(map);
+          statusEl.textContent = "";
+          ensureYear(yearOfIndex(currentT));
+        })
+        .catch(function (err) {
+          statusEl.textContent = "Could not load data. Run python3 app.py first. " + err.message;
+        });
+    });
+  </script>
+</body>
+</html>
