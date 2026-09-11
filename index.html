@@ -79,7 +79,7 @@
     .legend {
       bottom: 88px;
       right: 12px;
-      width: 220px;
+      width: 260px;
     }
     .legend h2 {
       margin: 0 0 8px;
@@ -91,11 +91,14 @@
       border-radius: 6px;
       background: linear-gradient(
         90deg,
-        #2166ac 0%,
-        #67a9cf 25%,
+        #053061 0%,
+        #2166ac 25%,
+        #67a9cf 37.5%,
         #ffffbf 50%,
-        #f4a582 75%,
-        #b2182b 100%
+        #f4a582 62.5%,
+        #d6604d 75%,
+        #b2182b 87.5%,
+        #67001f 100%
       );
     }
     .legend-labels {
@@ -202,9 +205,11 @@
     <h2>Departure vs 1901–2000</h2>
     <div class="legend-bar"></div>
     <div class="legend-labels">
-      <span>−4°C</span>
+      <span>−8°C</span>
+      <span>−4</span>
       <span>0°</span>
-      <span>+4°C</span>
+      <span>+4</span>
+      <span>+8°C</span>
     </div>
     <p>Yellow is near the 20th-century average for that location and month.</p>
   </div>
@@ -217,7 +222,6 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script>
-    const COLOR_RANGE = 4;
     const PIXEL_STEP = 2;
     const PLAY_MS = 167;
     const MONTH_NAMES = [
@@ -225,11 +229,14 @@
       "July", "August", "September", "October", "November", "December"
     ];
     const COLOR_STOPS = [
+      [-8, [5, 48, 97]],
       [-4, [33, 102, 172]],
       [-2, [103, 169, 207]],
       [0, [255, 255, 191]],
       [2, [244, 165, 130]],
-      [4, [178, 24, 43]]
+      [4, [214, 96, 77]],
+      [6, [178, 24, 43]],
+      [8, [103, 0, 31]]
     ];
 
     const WORLD_BOUNDS = L.latLngBounds([-85.051128, -180], [85.051128, 180]);
