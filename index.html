@@ -12,7 +12,7 @@
       --border: rgba(255, 255, 255, 0.12);
       --text: #e8edf4;
       --muted: #9aa6b5;
-      --accent: #f4a582;
+      --accent: #d6604d;
     }
     * { box-sizing: border-box; }
     html, body, #map {
@@ -55,7 +55,7 @@
       font-size: 20px;
       font-weight: 650;
     }
-    .title-panel .global.warm { color: #f4a582; }
+    .title-panel .global.warm { color: #d6604d; }
     .title-panel .global.cool { color: #67a9cf; }
     .status {
       margin: 8px 0 0;
@@ -89,17 +89,6 @@
     .legend-bar {
       height: 12px;
       border-radius: 6px;
-      background: linear-gradient(
-        90deg,
-        #053061 0%,
-        #2166ac 25%,
-        #67a9cf 37.5%,
-        #ffffbf 50%,
-        #f4a582 62.5%,
-        #d6604d 75%,
-        #b2182b 87.5%,
-        #67001f 100%
-      );
     }
     .legend-labels {
       display: flex;
@@ -139,7 +128,8 @@
     .timeline input[type="range"] {
       flex: 1;
       min-width: 0;
-      accent-color: #f4a582;
+      accent-color: #d6604d;
+      cursor: pointer;
     }
     .timeline .month-label {
       font-size: 13px;
@@ -159,6 +149,40 @@
       line-height: 1.45;
     }
     .leaflet-tooltip.anomaly-tip::before { display: none; }
+    .leaflet-top.leaflet-right {
+      top: 12px;
+      right: 12px;
+    }
+    .leaflet-control-zoom.leaflet-bar {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: none;
+    }
+    .leaflet-control-zoom.leaflet-bar a {
+      width: 34px;
+      height: 34px;
+      line-height: 34px;
+      background: var(--panel);
+      color: var(--text);
+      border-bottom: 1px solid var(--border);
+    }
+    .leaflet-control-zoom.leaflet-bar a:last-child {
+      border-bottom: none;
+    }
+    .leaflet-control-zoom.leaflet-bar a:hover {
+      background: rgba(255, 255, 255, 0.14);
+      color: var(--text);
+    }
+    .leaflet-control-zoom.leaflet-bar a.leaflet-disabled {
+      background: rgba(12, 16, 22, 0.75);
+      color: var(--muted);
+      cursor: default;
+    }
+    .leaflet-control-zoom.leaflet-bar a.leaflet-disabled:hover {
+      background: rgba(12, 16, 22, 0.75);
+      color: var(--muted);
+    }
     .leaflet-control-attribution {
       background: rgba(12, 16, 22, 0.8) !important;
       color: #8b95a3 !important;
@@ -166,7 +190,8 @@
     .leaflet-control-attribution a { color: #c5cdd8 !important; }
     .anomaly-overlay {
       pointer-events: none;
-      opacity: 0.55;
+      opacity: 0.6  ;
+      image-rendering: auto;
     }
   </style>
 </head>
@@ -211,7 +236,7 @@
       <span>+4</span>
       <span>+8°C</span>
     </div>
-    <p>Yellow is near the 20th-century average for that location and month.</p>
+    <p>Yellow is near the 1901–2000 average; red tones build from about +3°C.</p>
   </div>
 
   <div class="panel timeline">
@@ -223,19 +248,27 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script>
     const PIXEL_STEP = 2;
+    const SAMPLE_SIGMA = 0.95;
+    const SAMPLE_RADIUS = 2;
+    const OVERLAY_BLUR_PX = 1.25;
     const PLAY_MS = 167;
     const MONTH_NAMES = [
       "January", "February", "March", "April", "May", "June",
       "July", "August", "September", "October", "November", "December"
     ];
-    const COLOR_STOPS = [
+    const NEUTRAL = [255, 255, 191];
+    const COOL_STOPS = [
       [-8, [5, 48, 97]],
       [-4, [33, 102, 172]],
       [-2, [103, 169, 207]],
-      [0, [255, 255, 191]],
-      [2, [244, 165, 130]],
+      [-0.75, [255, 255, 255]],
+      [0, NEUTRAL]
+    ];
+    const WARM_STOPS = [
+      [0, NEUTRAL],
+      [1, [253, 174, 97]],
+      [2, [247, 152, 108]],
       [4, [214, 96, 77]],
-      [6, [178, 24, 43]],
       [8, [103, 0, 31]]
     ];
 
@@ -246,8 +279,11 @@
       minZoom: 3,
       maxZoom: 8,
       maxBounds: WORLD_BOUNDS,
-      maxBoundsViscosity: 1
+      maxBoundsViscosity: 1,
+      zoomControl: false
     }).setView([40, -30], 3);
+
+    L.control.zoom({ position: "topright" }).addTo(map);
 
     L.tileLayer(
       "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}",
@@ -308,30 +344,112 @@
 
     const ViewportOverlay = L.Layer.extend({
       onAdd: function (mapRef) {
-        this._canvas = L.DomUtil.create("canvas", "anomaly-overlay");
+        this._redrawFrame = 0;
+        this._renderBounds = null;
+        this._renderZoom = null;
+        this._zoomAnimated = L.Browser.any3d && mapRef.options.zoomAnimation;
+        this._canvas = L.DomUtil.create("canvas", "anomaly-overlay leaflet-zoom-animated");
         mapRef.getPanes().overlayPane.appendChild(this._canvas);
-        mapRef.on("move zoom resize", this._redraw, this);
+        if (this._zoomAnimated) {
+          mapRef.on("zoomanim", this._animateZoom, this);
+        }
+        mapRef.on(this.getEvents(), this);
         this._redraw();
       },
       onRemove: function (mapRef) {
-        mapRef.off("move zoom resize", this._redraw, this);
+        this._cancelScheduledRedraw();
+        if (this._zoomAnimated) {
+          mapRef.off("zoomanim", this._animateZoom, this);
+        }
+        mapRef.off(this.getEvents(), this);
         L.DomUtil.remove(this._canvas);
       },
+      getEvents: function () {
+        return {
+          zoomstart: this._onZoomStart,
+          viewreset: this._onViewReset,
+          move: this._onMove,
+          moveend: this._onMoveEnd,
+          resize: this._onResize
+        };
+      },
       redraw: function () {
+        this._cancelScheduledRedraw();
         this._redraw();
       },
-      _redraw: function () {
+      _cancelScheduledRedraw: function () {
+        if (this._redrawFrame) {
+          cancelAnimationFrame(this._redrawFrame);
+          this._redrawFrame = 0;
+        }
+      },
+      _animateZoom: function (e) {
+        if (!this._renderBounds) return;
+        const map = this._map;
+        const scale = map.getZoomScale(e.zoom);
+        const offset = map._latLngBoundsToNewLayerBounds(this._renderBounds, e.zoom, e.center).min;
+        L.DomUtil.setTransform(this._canvas, offset, scale);
+      },
+      _syncCanvasFrame: function () {
+        const map = this._map;
+        const canvas = this._canvas;
+        const size = map.getSize();
+        this._renderBounds = L.latLngBounds(
+          map.containerPointToLatLng([0, 0]),
+          map.containerPointToLatLng([size.x, size.y])
+        );
+        this._renderZoom = map.getZoom();
+        const layerBounds = L.bounds(
+          map.latLngToLayerPoint(this._renderBounds.getNorthWest()),
+          map.latLngToLayerPoint(this._renderBounds.getSouthEast())
+        );
+        L.DomUtil.setTransform(canvas, 0, 1);
+        L.DomUtil.setPosition(canvas, layerBounds.min);
+        const layerSize = layerBounds.getSize();
+        canvas.style.width = layerSize.x + "px";
+        canvas.style.height = layerSize.y + "px";
+      },
+      _onZoomStart: function () {
+        this._cancelScheduledRedraw();
+      },
+      _onViewReset: function () {
+        this._cancelScheduledRedraw();
+        L.DomUtil.setTransform(this._canvas, 0, 1);
+        this._redraw();
+      },
+      _onMove: function () {
+        if (this._map._animatingZoom) return;
+        this._scheduleRedraw(true);
+      },
+      _onMoveEnd: function () {
+        if (this._map._animatingZoom) return;
+        if (this._renderZoom != null && this._map.getZoom() !== this._renderZoom) return;
+        this._cancelScheduledRedraw();
+        this._redraw();
+      },
+      _onResize: function () {
+        this._cancelScheduledRedraw();
+        this._redraw();
+      },
+      _scheduleRedraw: function (fast) {
+        const self = this;
+        if (self._redrawFrame) return;
+        self._redrawFrame = requestAnimationFrame(function () {
+          self._redrawFrame = 0;
+          if (!self._map._animatingZoom) self._redraw(fast);
+        });
+      },
+      _redraw: function (fast) {
         const mapRef = this._map;
         const canvas = this._canvas;
         if (!mapRef || !canvas || !currentGrid) return;
+        const pixelStep = fast ? Math.max(PIXEL_STEP, 4) : PIXEL_STEP;
+        const blurPx = fast ? 0 : OVERLAY_BLUR_PX;
         const size = mapRef.getSize();
-        const w = Math.max(1, Math.ceil(size.x / PIXEL_STEP));
-        const h = Math.max(1, Math.ceil(size.y / PIXEL_STEP));
+        const w = Math.max(1, Math.ceil(size.x / pixelStep));
+        const h = Math.max(1, Math.ceil(size.y / pixelStep));
         canvas.width = w;
         canvas.height = h;
-        canvas.style.width = size.x + "px";
-        canvas.style.height = size.y + "px";
-        L.DomUtil.setPosition(canvas, mapRef.containerPointToLayerPoint([0, 0]));
 
         const ctx = canvas.getContext("2d");
         const image = ctx.createImageData(w, h);
@@ -339,7 +457,7 @@
         for (let y = 0; y < h; y++) {
           for (let x = 0; x < w; x++) {
             const latlng = mapRef.containerPointToLatLng(
-              L.point(x * PIXEL_STEP + PIXEL_STEP / 2, y * PIXEL_STEP + PIXEL_STEP / 2)
+              L.point(x * pixelStep + pixelStep / 2, y * pixelStep + pixelStep / 2)
             );
             const idx = (y * w + x) * 4;
             if (latlng.lat > 85.051128 || latlng.lat < -85.051128) {
@@ -355,10 +473,22 @@
             data[idx] = rgb[0];
             data[idx + 1] = rgb[1];
             data[idx + 2] = rgb[2];
-            data[idx + 3] = 160;
+            data[idx + 3] = 210;
           }
         }
-        ctx.putImageData(image, 0, 0);
+        if (blurPx > 0) {
+          const scratch = document.createElement("canvas");
+          scratch.width = w;
+          scratch.height = h;
+          scratch.getContext("2d").putImageData(image, 0, 0);
+          ctx.save();
+          ctx.filter = "blur(" + blurPx + "px)";
+          ctx.drawImage(scratch, 0, 0);
+          ctx.restore();
+        } else {
+          ctx.putImageData(image, 0, 0);
+        }
+        this._syncCanvasFrame();
       }
     });
 
@@ -404,19 +534,44 @@
       ];
     }
 
-    function colorForAnomaly(value) {
-      if (value <= COLOR_STOPS[0][0]) return COLOR_STOPS[0][1];
-      if (value >= COLOR_STOPS[COLOR_STOPS.length - 1][0]) {
-        return COLOR_STOPS[COLOR_STOPS.length - 1][1];
-      }
-      for (let i = 0; i < COLOR_STOPS.length - 1; i++) {
-        const x0 = COLOR_STOPS[i][0];
-        const c0 = COLOR_STOPS[i][1];
-        const x1 = COLOR_STOPS[i + 1][0];
-        const c1 = COLOR_STOPS[i + 1][1];
+    function colorFromStops(value, stops) {
+      if (value <= stops[0][0]) return stops[0][1];
+      if (value >= stops[stops.length - 1][0]) return stops[stops.length - 1][1];
+      for (let i = 0; i < stops.length - 1; i++) {
+        const x0 = stops[i][0];
+        const c0 = stops[i][1];
+        const x1 = stops[i + 1][0];
+        const c1 = stops[i + 1][1];
         if (value <= x1) return lerpColor(c0, c1, (value - x0) / (x1 - x0));
       }
-      return COLOR_STOPS[COLOR_STOPS.length - 1][1];
+      return stops[stops.length - 1][1];
+    }
+
+    function colorForAnomaly(value) {
+      if (value < 0) return colorFromStops(value, COOL_STOPS);
+      return colorFromStops(value, WARM_STOPS);
+    }
+
+    (function syncLegendBar() {
+      const min = COOL_STOPS[0][0];
+      const max = WARM_STOPS[WARM_STOPS.length - 1][0];
+      const n = 48;
+      const parts = [];
+      for (let i = 0; i <= n; i++) {
+        const v = min + (max - min) * (i / n);
+        const rgb = colorForAnomaly(v);
+        const pct = (i / n) * 100;
+        parts.push("rgb(" + rgb.join(",") + ") " + pct + "%");
+      }
+      document.querySelector(".legend-bar").style.background =
+        "linear-gradient(90deg, " + parts.join(", ") + ")";
+    })();
+
+    function lonIndexDelta(fj, j) {
+      let d = fj - j;
+      if (d > nlon * 0.5) d -= nlon;
+      if (d < -nlon * 0.5) d += nlon;
+      return d;
     }
 
     function sampleAnomaly(lat, lon) {
@@ -424,25 +579,23 @@
       let fj = lonToIndex(lon);
       fj = ((fj % nlon) + nlon) % nlon;
       const i0 = Math.floor(fi);
-      const i1 = Math.min(i0 + 1, nlat - 1);
       const j0 = Math.floor(fj);
-      const j1 = wrapLonIdx(j0 + 1);
-      const ty = fi - i0;
-      const tx = fj - j0;
-      const corners = [
-        [decodeCell(i0, j0), (1 - tx) * (1 - ty)],
-        [decodeCell(i0, j1), tx * (1 - ty)],
-        [decodeCell(i1, j0), (1 - tx) * ty],
-        [decodeCell(i1, j1), tx * ty]
-      ];
+      const sigma2 = SAMPLE_SIGMA * SAMPLE_SIGMA;
       let num = 0;
       let den = 0;
-      for (let k = 0; k < corners.length; k++) {
-        const value = corners[k][0];
-        const w = corners[k][1];
-        if (value == null || w <= 0) continue;
-        num += value * w;
-        den += w;
+      for (let di = -SAMPLE_RADIUS; di <= SAMPLE_RADIUS; di++) {
+        const i = i0 + di;
+        if (i < 0 || i >= nlat) continue;
+        const dy = fi - i;
+        for (let dj = -SAMPLE_RADIUS; dj <= SAMPLE_RADIUS; dj++) {
+          const j = wrapLonIdx(j0 + dj);
+          const dx = lonIndexDelta(fj, j0 + dj);
+          const w = Math.exp(-(dy * dy + dx * dx) / (2 * sigma2));
+          const value = decodeCell(i, j);
+          if (value == null || w <= 0) continue;
+          num += value * w;
+          den += w;
+        }
       }
       return den === 0 ? null : num / den;
     }
